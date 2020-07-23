@@ -28,7 +28,7 @@ N <- 20000
 n_a <- 1000
 n_b <- 1000
 ### 
-z1 <- rbinom(N,1,0.5)
+z1 <- rbinom(N,1,0.7)
 z2 <- runif(N,0,2)
 z3 <- rexp(N,1)
 z4 <- rchisq(N, 4)
@@ -113,14 +113,11 @@ res <- multiroot(f = pseudo_ll_propensity, start = rep(0,5))
 res
 ```
 
-```{r}
-pseudo_ll_propensity(res$root)
-```
 
 ```{r}
 X_a <- samples[samples$nonprob == 1, c("x0", "x1", "x2", "x3", "x4")]
 probs_a <- as.numeric(exp(as.matrix(X_a)  %*% res$root) / ( 1 + exp(as.matrix(X_a)  %*% res$root)))
-weighted.mean(samples[samples$nonprob == 1, c("y80")], 1/probs_a)
+weighted.mean(samples[samples$nonprob == 1, c("y30")], 1/probs_a)
 ```
 
 ## Calibration approach
@@ -142,6 +139,30 @@ probs <- as.numeric(exp(par %*% t(X_a)) / (1 + exp(par %*% t(X_a))))
 colSums(X_a/probs)
 weighted.mean(samples[samples$nonprob == 1, "y30"], as.numeric(1/probs))
 
+
+```
+
+Add misclass error
+
+
+```{r}
+samples$x1er <- samples$x1 == 0
+
+pseudo_ll_calib <- function(par) {
+  X_a <- samples[samples$nonprob == 1, c("x0", "x1er", "x2", "x3", "x4")]
+  totals <- colSums(cbind(1,sim_data[,c("x1", "x2", "x3", "x4")]))
+  probs <- exp(par %*% t(X_a)) / (1 + exp(par %*% t(X_a)))
+  colSums(X_a/probs) - totals
+}
+
+res2 <- multiroot(f = pseudo_ll_calib, start = rep(-1,5))
+res2
+
+par <- res2$root
+X_a <- samples[samples$nonprob == 1, c("x0", "x1", "x2", "x3", "x4")]
+probs <- as.numeric(exp(par %*% t(X_a)) / (1 + exp(par %*% t(X_a))))
+colSums(X_a/probs)
+weighted.mean(samples[samples$nonprob == 1, "y30"], as.numeric(1/probs))
 
 ```
 
