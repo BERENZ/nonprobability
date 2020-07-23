@@ -1,0 +1,147 @@
+---
+title: "Doubly robust etc"
+output: html_notebook
+---
+
+Implementation of methods from the paper Chen, Y., Li, P., & Wu, C. (2019). Doubly Robust Inference With Nonprobability Survey Samples. Journal of the American Statistical Association, 1-11.
+
+
+# Packages
+
+```{r}
+library(maxLik)
+library(rootSolve)
+library(sampling)
+library(compiler)
+```
+
+
+
+# Simulated data
+
+## Population data
+
+```{r}
+set.seed(666)
+N <- 20000
+## this may vary but not here
+n_a <- 1000
+n_b <- 1000
+### 
+z1 <- rbinom(N,1,0.5)
+z2 <- runif(N,0,2)
+z3 <- rexp(N,1)
+z4 <- rchisq(N, 4)
+x1 <- z1 
+x2 <- z2 + 0.3*x1
+x3 <- z3 + 0.2*(x1 + x2)
+x4 <- z4 + 0.1*(x1 + x2 + x3)
+epsilon <- rnorm(N)
+## controlled at 0.3 (10.4), 0.5 (5.4) and 0.8 (2.4) for the simulation studies
+sig30 <- 10.4
+sig50 <- 5.4
+sig80 <- 2.4
+y30 <- 2 + x1 + x2 + x3 + x4 + sig30*epsilon
+y50 <- 2 + x1 + x2 + x3 + x4 + sig50*epsilon
+y80 <- 2 + x1 + x2 + x3 + x4 + sig80*epsilon
+
+sim_data <- data.frame(y30, y50, y80, x1, x2, x3, x4, z1, z2, z3, z4)
+head(sim_data)
+```
+
+## Non-probability sample
+
+```{r}
+set.seed(1)
+eta_a <- -4.406 + 0.1*x1 + 0.2*x2 + 0.1*x3 + 0.2*x4
+prob_a <- exp(eta_a) / (1 + exp(eta_a))
+sample_a_flag <- UPpoisson(prob_a)
+sample_a <- sim_data[sample_a_flag == 1,]
+sample_a$prob <- prob_a[sample_a_flag == 1]
+sample_a$weight <- 1/sample_a$prob
+sample_a$nonprob <- 1
+sample_a
+```
+
+## Probability sample
+
+```{r}
+set.seed(1)
+z_b <- x3  + 0.215
+prob_b <- inclusionprobabilities(z_b,n_b)
+sample_b_flag <- UPsystematic(prob_b)  
+sample_b <- sim_data[sample_b_flag == 1,]
+sample_b$prob <- prob_b[sample_b_flag == 1]
+sample_b$weight <- 1/sample_b$prob
+sample_b$nonprob <- 0
+sample_b
+```
+
+Comparison
+
+```{r}
+c(true = mean(y30), nonprob  = mean(sample_a$y30), prob = weighted.mean(sample_b$y30,sample_b$weight))
+```
+
+# Propensity score method
+
+Just to see if it works
+
+```{r}
+samples <- rbind(sample_a,sample_b)
+samples$x0 <- 1
+```
+
+Score function using 1, x1, x2, x3
+
+
+```{r}
+pseudo_ll_propensity <- function(x) {
+ 
+  ## totals for non-prob sample
+  totals_a <- colSums(samples[samples$nonprob == 1, c("x0", "x1", "x2", "x3", "x4")])
+  
+  ## Xs for probability samples
+  X_b <- samples[samples$nonprob == 0, c("x0", "x1", "x2", "x3", "x4")]
+  weight_b <- samples[samples$nonprob == 0, c("weight")]
+  probs <- exp(x %*% t(X_b)) / (1 + exp(x %*% t(X_b)))
+  totals_b <- colSums(weight_b * probs * X_b)
+  totals_a - totals_b
+} 
+
+res <- multiroot(f = pseudo_ll_propensity, start = rep(0,5))
+res
+```
+
+```{r}
+pseudo_ll_propensity(res$root)
+```
+
+```{r}
+X_a <- samples[samples$nonprob == 1, c("x0", "x1", "x2", "x3", "x4")]
+probs_a <- as.numeric(exp(as.matrix(X_a)  %*% res$root) / ( 1 + exp(as.matrix(X_a)  %*% res$root)))
+weighted.mean(samples[samples$nonprob == 1, c("y80")], 1/probs_a)
+```
+
+## Calibration approach
+
+```{r}
+pseudo_ll_calib <- function(par) {
+  X_a <- samples[samples$nonprob == 1, c("x0", "x1", "x2", "x3", "x4")]
+  totals <- colSums(cbind(1,sim_data[,c("x1", "x2", "x3", "x4")]))
+  probs <- exp(par %*% t(X_a)) / (1 + exp(par %*% t(X_a)))
+  colSums(X_a/probs) - totals
+}
+
+res2 <- multiroot(f = pseudo_ll_calib, start = rep(0,5))
+res2
+
+par <- res2$root
+X_a <- samples[samples$nonprob == 1, c("x0", "x1", "x2", "x3", "x4")]
+probs <- as.numeric(exp(par %*% t(X_a)) / (1 + exp(par %*% t(X_a))))
+colSums(X_a/probs)
+weighted.mean(samples[samples$nonprob == 1, "y30"], as.numeric(1/probs))
+
+
+```
+
